@@ -3,10 +3,11 @@
 > Built for the Investec Developer Community's **Q3 2026 "Future You" Bounty**.
 > Most banking apps tell you what happened. This one tells you what's likely to happen next.
 
-Live dashboard: forecasts your available balance forward, detects recurring
-payments and debit orders from your Investec transaction history, flags
-cashflow risk before it happens, and answers "can I afford this?" before you
-spend.
+**Live demo:** https://investec-future-you.vercel.app
+
+Forecasts your available balance forward, detects recurring payments and
+debit orders from your Investec transaction history, flags cashflow risk
+before it happens, and answers "can I afford this?" before you spend.
 
 ## 1. What problem does this solve?
 
