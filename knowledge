@@ -1,0 +1,59 @@
+# Knowledge / gotchas
+
+Lessons learned building this for the Q3 2026 "Future You" bounty.
+
+## Investec sandbox vs production host mixup
+
+Investec's sandbox uses a **different hostname** from production:
+
+- Sandbox: `https://openapisandbox.investec.com`
+- Production: `https://openapi.investec.com`
+
+The same sandbox client_id/secret/API key will authenticate against
+*either* host (you get a token back either way), but calling any real
+endpoint (accounts, transactions) on the *production* host with *sandbox*
+credentials fails with a cryptic Apigee error:
+
+```
+{"fault":{"faultstring":"Invalid API call as no apiproduct match found", ...}}
+```
+
+If you see that error, double-check the host before assuming your
+credentials are wrong.
+
+## Convex: same-file public/internal function calls create a TS cycle
+
+Calling `ctx.runAction(internal.someModule.someFunction, ...)` from a
+*different exported function in that same file* causes a real circular
+type-inference error (`TS7022`/`TS7023`), because the generated `internal`/
+`api` objects are typed by importing this very file. Fix: extract the shared
+logic into a plain (non-Convex-wrapped) async function and have both the
+public and internal exports call that function directly instead of routing
+through `ctx.runAction`/`ctx.runQuery`/`ctx.runMutation` back into the same
+file.
+
+## Convex actions and `process.env`
+
+Convex's default (non-Node) action runtime does support `process.env.MY_VAR`
+for custom environment variables set via `npx convex env set`, but the
+*generated* `convex/tsconfig.json` doesn't include Node's global types by
+default. Add `"types": ["node"]` to `convex/tsconfig.json`. If your frontend
+imports types from the generated `convex/_generated/api.d.ts` (which it will,
+via `api.*.*`), TypeScript will also transitively type-check the actual
+server `.ts` source files using the *frontend's* tsconfig, so add
+`"types": ["node"]` there too, or you'll see the same `process` error
+reported against `src/` even though the problem is server-side.
+
+## Recurring detection: group by merchant, not by exact amount
+
+Grouping strictly by (merchant, amount) misses genuinely-recurring bills
+that vary month to month (electricity, water). Instead, group by merchant
++ direction only, and let *amount consistency* feed into the confidence
+score rather than the grouping key itself.
+
+## Balance source: use `runningBalance`, not a separate balance call
+
+Investec's transactions endpoint already returns `runningBalance` per
+transaction. Using the most recent transaction's `runningBalance` as the
+forecast's starting point avoids a second `GET .../balance` API call
+entirely.

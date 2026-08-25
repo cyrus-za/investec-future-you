@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.logs/
+.env
+.env.local
+.env*.local
+*.log
+.DS_Store
+
+# Convex-vendored local AI agent skill files (fetched via `npx convex ai-files install`)
+.agents/
+.claude/
+skills-lock.json
