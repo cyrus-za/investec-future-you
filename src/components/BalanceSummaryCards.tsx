@@ -1,4 +1,13 @@
+import { AlertTriangle, CalendarClock, TrendingDown, Wallet } from "lucide-react";
+import { motion } from "motion/react";
+import type { ComponentType } from "react";
 import { formatDateFull, formatMoney } from "../lib/format";
+import { Card, CardContent } from "./ui/card";
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0 },
+};
 
 export function BalanceSummaryCards({
   currency,
@@ -18,53 +27,88 @@ export function BalanceSummaryCards({
   daysUntilPayday: number | null;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <Card label="Available now" value={formatMoney(startingBalanceCents, currency)} />
-      <Card
+    <motion.div
+      initial="hidden"
+      animate="show"
+      transition={{ staggerChildren: 0.06 }}
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+    >
+      <StatCard
+        icon={Wallet}
+        label="Available now"
+        value={formatMoney(startingBalanceCents, currency)}
+      />
+      <StatCard
+        icon={TrendingDown}
         label="Projected at end of horizon"
         value={formatMoney(projectedEndBalanceCents, currency)}
         tone={projectedEndBalanceCents < 0 ? "danger" : "default"}
       />
-      <Card
+      <StatCard
+        icon={TrendingDown}
         label="Lowest projected balance"
         value={formatMoney(minBalanceCents, currency)}
         sub={formatDateFull(minBalanceAtMs)}
         tone={minBalanceCents < 0 ? "danger" : "default"}
       />
-      <Card
+      <StatCard
+        icon={CalendarClock}
         label="Days until payday"
         value={daysUntilPayday === null ? "—" : String(daysUntilPayday)}
         sub={daysUntilPayday === null ? "No payday detected yet" : undefined}
       />
       {firstBreachAtMs !== null && (
-        <div className="sm:col-span-2 lg:col-span-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          ⚠️ Cashflow risk: projected balance drops to or below your safety threshold by{" "}
-          <strong>{formatDateFull(firstBreachAtMs)}</strong>, based on detected recurring
-          payments.
-        </div>
+        <motion.div
+          variants={cardVariants}
+          className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:col-span-2 lg:col-span-4"
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <p>
+            <strong>Cashflow risk:</strong> projected balance drops to or below your safety
+            threshold by <strong>{formatDateFull(firstBreachAtMs)}</strong>, based on detected
+            recurring payments.
+          </p>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
-function Card({
+function StatCard({
+  icon: Icon,
   label,
   value,
   sub,
   tone = "default",
 }: {
+  icon: ComponentType<{ className?: string }>;
   label: string;
   value: string;
   sub?: string;
   tone?: "default" | "danger";
 }) {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-      <div className="text-xs uppercase tracking-wide text-slate-400">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold ${tone === "danger" ? "text-red-400" : "text-slate-50"}`}>
-        {value}
-      </div>
-      {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
-    </div>
+    <motion.div variants={cardVariants}>
+      <Card className="gap-2">
+        <CardContent className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              {label}
+            </div>
+            <div
+              className={`mt-1 text-2xl font-semibold ${tone === "danger" ? "text-destructive" : "text-foreground"}`}
+            >
+              {value}
+            </div>
+            {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
+          </div>
+          <div
+            className={`rounded-lg p-2 ${tone === "danger" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"}`}
+          >
+            <Icon className="size-4" />
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
   );
 }

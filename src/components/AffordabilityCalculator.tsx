@@ -1,8 +1,13 @@
 import { useQuery } from "convex/react";
+import { CheckCircle2, Sparkles, XCircle } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { formatDateFull, formatMoney } from "../lib/format";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Input } from "./ui/input";
 
 export function AffordabilityCalculator({
   accountId,
@@ -45,72 +50,87 @@ export function AffordabilityCalculator({
   }
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-slate-200">Can I afford this?</h3>
-      <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col">
-          <label className="text-xs text-slate-400">What</label>
-          <input
-            className="w-40 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="New TV"
-          />
-        </div>
-        <div className="flex flex-col">
-          <label className="text-xs text-slate-400">Amount ({currency})</label>
-          <input
-            className="w-32 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            type="number"
-            min="0"
-            step="0.01"
-            value={amountRand}
-            onChange={(e) => setAmountRand(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-col">
-          <label className="text-xs text-slate-400">When</label>
-          <input
-            className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            type="date"
-            value={dateStr}
-            onChange={(e) => setDateStr(e.target.value)}
-          />
-        </div>
-        <button
-          type="submit"
-          className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
-        >
-          Check
-        </button>
-      </form>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="size-4 text-primary" />
+          Can I afford this?
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">What</label>
+            <Input
+              className="w-40"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="New TV"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Amount ({currency})</label>
+            <Input
+              className="w-32"
+              type="number"
+              min="0"
+              step="0.01"
+              value={amountRand}
+              onChange={(e) => setAmountRand(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">When</label>
+            <Input
+              type="date"
+              value={dateStr}
+              onChange={(e) => setDateStr(e.target.value)}
+            />
+          </div>
+          <Button type="submit">Check</Button>
+        </form>
 
-      {submitted && result === undefined && (
-        <p className="mt-3 text-sm text-slate-500">Calculating…</p>
-      )}
+        {submitted && result === undefined && (
+          <p className="mt-3 text-sm text-muted-foreground">Calculating…</p>
+        )}
 
-      {submitted && result && (
-        <div
-          className={`mt-4 rounded-md border px-4 py-3 text-sm ${
-            result.canAfford
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-              : "border-red-500/40 bg-red-500/10 text-red-200"
-          }`}
-        >
-          <p className="font-medium">
-            {result.canAfford
-              ? `Yes — "${submitted.label}" looks affordable.`
-              : `Risky — "${submitted.label}" would likely cause a shortfall.`}
-          </p>
-          <p className="mt-1 text-xs opacity-80">
-            Projected lowest balance after this purchase:{" "}
-            {formatMoney(result.projectedMinBalanceCents, result.currency)} around{" "}
-            {formatDateFull(result.projectedMinBalanceAtMs)}.
-            {result.daysUntilPayday !== null &&
-              ` Next payday in ${result.daysUntilPayday} day${result.daysUntilPayday === 1 ? "" : "s"}.`}
-          </p>
-        </div>
-      )}
-    </div>
+        <AnimatePresence mode="wait">
+          {submitted && result && (
+            <motion.div
+              key={`${submitted.label}-${submitted.amountCents}-${submitted.dateMs}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className={`mt-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+                result.canAfford
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-destructive/40 bg-destructive/10 text-destructive"
+              }`}
+            >
+              {result.canAfford ? (
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+              ) : (
+                <XCircle className="mt-0.5 size-4 shrink-0" />
+              )}
+              <div>
+                <p className="font-medium">
+                  {result.canAfford
+                    ? `Yes — "${submitted.label}" looks affordable.`
+                    : `Risky — "${submitted.label}" would likely cause a shortfall.`}
+                </p>
+                <p className="mt-1 text-xs opacity-80">
+                  Projected lowest balance after this purchase:{" "}
+                  {formatMoney(result.projectedMinBalanceCents, result.currency)} around{" "}
+                  {formatDateFull(result.projectedMinBalanceAtMs)}.
+                  {result.daysUntilPayday !== null &&
+                    ` Next payday in ${result.daysUntilPayday} day${result.daysUntilPayday === 1 ? "" : "s"}.`}
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </CardContent>
+    </Card>
   );
 }

@@ -1,16 +1,39 @@
+import { TrendingUp } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { formatDate, formatMoney } from "../lib/format";
+import { formatDate, formatDateFull, formatMoney } from "../lib/format";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
 type DailyBalance = { dateMs: number; balanceCents: number };
+
+function ChartTooltip({
+  active,
+  payload,
+  currency,
+}: {
+  active?: boolean;
+  payload?: { value?: number }[];
+  currency: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0] as unknown as { value: number; payload: { date: number } };
+  return (
+    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
+      <div className="text-muted-foreground">{formatDateFull(point.payload.date)}</div>
+      <div className="mt-0.5 font-semibold text-foreground">
+        {formatMoney(point.value * 100, currency)}
+      </div>
+    </div>
+  );
+}
 
 export function ForecastChart({
   dailyBalances,
@@ -27,32 +50,60 @@ export function ForecastChart({
   }));
 
   return (
-    <div className="h-72 w-full rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-          <XAxis
-            dataKey="date"
-            tickFormatter={(v) => formatDate(v)}
-            stroke="#64748b"
-            fontSize={12}
-            minTickGap={24}
-          />
-          <YAxis
-            stroke="#64748b"
-            fontSize={12}
-            tickFormatter={(v) => formatMoney(v * 100, currency)}
-            width={90}
-          />
-          <Tooltip
-            contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8 }}
-            labelFormatter={(v) => formatDate(Number(v))}
-            formatter={(value) => [formatMoney(Number(value) * 100, currency), "Projected balance"]}
-          />
-          <ReferenceLine y={safetyThresholdCents / 100} stroke="#f87171" strokeDasharray="4 4" />
-          <Line type="stepAfter" dataKey="balance" stroke="#34d399" strokeWidth={2} dot={false} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUp className="size-4 text-primary" />
+          Projected balance
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="h-72 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="balanceFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.35} />
+                  <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(v) => formatDate(v)}
+                stroke="var(--muted-foreground)"
+                fontSize={12}
+                minTickGap={28}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                stroke="var(--muted-foreground)"
+                fontSize={12}
+                tickFormatter={(v) => formatMoney(v * 100, currency)}
+                width={84}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip content={<ChartTooltip currency={currency} />} />
+              <ReferenceLine
+                y={safetyThresholdCents / 100}
+                stroke="var(--destructive)"
+                strokeDasharray="4 4"
+              />
+              <Area
+                type="monotone"
+                dataKey="balance"
+                stroke="var(--primary)"
+                strokeWidth={2}
+                fill="url(#balanceFill)"
+                dot={false}
+                animationDuration={600}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
