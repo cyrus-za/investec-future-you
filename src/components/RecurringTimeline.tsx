@@ -41,10 +41,10 @@ export function RecurringTimeline({ series, currency }: { series: Series[]; curr
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Merchant</TableHead>
-                <TableHead>Cadence</TableHead>
+                <TableHead className="hidden sm:table-cell">Cadence</TableHead>
                 <TableHead>Amount</TableHead>
                 <TableHead>Next predicted</TableHead>
-                <TableHead>Confidence</TableHead>
+                <TableHead className="hidden sm:table-cell">Confidence</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -60,7 +60,9 @@ export function RecurringTimeline({ series, currency }: { series: Series[]; curr
                       )}
                     </span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{cadenceLabel(s.cadence)}</TableCell>
+                  <TableCell className="hidden text-muted-foreground sm:table-cell">
+                    {cadenceLabel(s.cadence)}
+                  </TableCell>
                   <TableCell
                     className={s.direction === "credit" ? "font-medium text-primary" : "font-medium"}
                   >
@@ -70,7 +72,7 @@ export function RecurringTimeline({ series, currency }: { series: Series[]; curr
                   <TableCell className="text-muted-foreground">
                     {formatDate(s.predictedNextAt)}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">
                     <ConfidenceBar value={s.confidence} />
                   </TableCell>
                 </TableRow>
