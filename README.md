@@ -9,6 +9,16 @@ Forecasts your available balance forward, detects recurring payments and
 debit orders from your Investec transaction history, flags cashflow risk
 before it happens, and answers "can I afford this?" before you spend.
 
+## Demo
+| Dashboard | Mobile |
+| --- | --- |
+| ![Dashboard](docs/screenshots/dashboard-desktop.png) | ![Mobile](docs/screenshots/dashboard-mobile.png) |
+
+**"Can I afford this?"** — same purchase amount, two different balances:
+| Affordable | Risky |
+| --- | --- |
+| ![Affordable](docs/screenshots/affordability-yes.png) | ![Risky](docs/screenshots/affordability-risky.png) |
+
 ## 1. What problem does this solve?
 
 Bank apps are great at showing a list of things that already happened.
