@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: typecheck · test · build (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22]
+    env:
+      CI: true
+      # VITE_CONVEX_URL is read by Vite at build time from the committed
+      # .env.production (a public deployment URL, not a secret).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run typecheck` starts with `npx convex codegen`, which (as of
+      # convex 1.45) must pull config from a live deployment and therefore
+      # cannot run on a fresh CI runner. Convex's recommended practice is to
+      # commit convex/_generated and typecheck against it, so CI runs the two
+      # tsc passes from the typecheck script directly. See docs/architecture.md
+      # ("CI notes") and CONTRIBUTING.md.
+      - name: Typecheck Convex functions
+        run: npx tsc -p convex/tsconfig.json --noEmit
+
+      - name: Typecheck frontend
+        run: npx tsc -b
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit + integration tests (vitest + convex-test)
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Guard against stray shadcn output ("@/" directory)
+        # The shadcn CLI occasionally writes into a literal "@/" folder at the
+        # repo root instead of src/. Fail loudly if one was committed.
+        run: |
+          if [ -d "@" ]; then
+            echo '::error::A literal "@/" directory exists at the repo root (stray shadcn CLI output). Move its contents into src/ and delete it.'
+            exit 1
+          fi
+
+  # Optional: verify that convex/_generated is fresh. Only runs when a
+  # CONVEX_DEPLOY_KEY secret is configured (forks and external PRs skip it),
+  # and never blocks the required `verify` job.
+  codegen-freshness:
+    name: convex codegen freshness (optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for deploy key
+        id: key
+        env:
+          HAS_KEY: ${{ secrets.CONVEX_DEPLOY_KEY != '' }}
+        run: echo "present=$HAS_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node 22
+        if: steps.key.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.key.outputs.present == 'true'
+        run: npm ci
+
+      - name: Regenerate convex/_generated and diff
+        if: steps.key.outputs.present == 'true'
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          npx convex codegen --typecheck=disable
+          git diff --exit-code -- convex/_generated || {
+            echo '::error::convex/_generated is out of date. Run `npx convex codegen` locally and commit the result.'
+            exit 1
+          }
+
+      - name: Skipped (no CONVEX_DEPLOY_KEY secret)
+        if: steps.key.outputs.present != 'true'
+        run: echo "CONVEX_DEPLOY_KEY not configured; skipping codegen freshness check."
