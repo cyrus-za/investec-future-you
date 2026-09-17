@@ -24,10 +24,15 @@ type SeedTx = {
   amountCents: number; // signed
   description: string;
   merchantName: string;
+  /** Mirrors Investec's transactionType so detection sees the same signal as real data. */
+  transactionType: "DebitOrders" | "CardPurchases" | "Deposits";
 };
 
+/** How much the most recent electricity bill is inflated (→ amount_spike insight). */
+const ELECTRICITY_SPIKE_FACTOR = 1.45;
+
 /** Build ~6 months of synthetic transactions ending today. */
-function buildSyntheticTransactions(): SeedTx[] {
+export function buildSyntheticTransactions(): SeedTx[] {
   const txs: SeedTx[] = [];
   const now = Date.now();
   const monthsBack = 6;
@@ -45,6 +50,7 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: 3800000 + jitter(m + 1, 0), // R38,000.00, fixed
       description: "SALARY ACME CORP",
       merchantName: "ACME CORP",
+      transactionType: "Deposits",
     });
 
     // Rent: fixed, 1st of month.
@@ -54,6 +60,7 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: -1250000, // -R12,500.00
       description: "RENT PAYMENT SUNSET APARTMENTS",
       merchantName: "SUNSET APARTMENTS",
+      transactionType: "DebitOrders",
     });
 
     // Insurance: fixed, 2nd of month.
@@ -63,6 +70,7 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: -85000, // -R850.00
       description: "OUTSURANCE PREMIUM",
       merchantName: "OUTSURANCE",
+      transactionType: "DebitOrders",
     });
 
     // Gym: fixed, 3rd of month.
@@ -72,6 +80,7 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: -45000, // -R450.00
       description: "VIRGIN ACTIVE DEBIT ORDER",
       merchantName: "VIRGIN ACTIVE",
+      transactionType: "DebitOrders",
     });
 
     // Streaming subscriptions: fixed, small.
@@ -81,6 +90,15 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: -19900,
       description: "NETFLIX.COM",
       merchantName: "NETFLIX",
+      transactionType: "DebitOrders",
+    });
+    txs.push({
+      key: `showmax-m${m}`,
+      daysAgo: daysAgo(utcDate(year, month, 6)),
+      amountCents: -9900,
+      description: "SHOWMAX",
+      merchantName: "SHOWMAX",
+      transactionType: "DebitOrders",
     });
     txs.push({
       key: `spotify-m${m}`,
@@ -88,7 +106,20 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: -9900,
       description: "SPOTIFY",
       merchantName: "SPOTIFY",
+      transactionType: "DebitOrders",
     });
+
+    // DSTV: ran for the three oldest months, then stopped (→ missed_payment).
+    if (m >= 3) {
+      txs.push({
+        key: `dstv-m${m}`,
+        daysAgo: daysAgo(utcDate(year, month, 15)),
+        amountCents: -89900,
+        description: "DSTV SUBSCRIPTION",
+        merchantName: "DSTV",
+        transactionType: "DebitOrders",
+      });
+    }
 
     // Electricity: monthly but variable amount (seasonal-ish jitter).
     txs.push({
@@ -97,6 +128,7 @@ function buildSyntheticTransactions(): SeedTx[] {
       amountCents: -(180000 + jitter(m + 10, 40000)),
       description: "CITY POWER ELECTRICITY",
       merchantName: "CITY POWER",
+      transactionType: "DebitOrders",
     });
 
     // Groceries: weekly-ish, variable amount, same merchant.
@@ -109,6 +141,7 @@ function buildSyntheticTransactions(): SeedTx[] {
         amountCents: -(80000 + jitter(m * 10 + w, 25000)),
         description: "WOOLWORTHS SANDTON ZA",
         merchantName: "WOOLWORTHS",
+        transactionType: "CardPurchases",
       });
     }
 
@@ -120,11 +153,26 @@ function buildSyntheticTransactions(): SeedTx[] {
         amountCents: -(120000 + jitter(m + 99, 60000)),
         description: `TAKEALOT.COM ORDER ${1000000 + m}`,
         merchantName: "TAKEALOT.COM",
+        transactionType: "CardPurchases",
       });
     }
   }
 
-  return txs.filter((t) => t.daysAgo >= 0);
+  const past = txs.filter((t) => t.daysAgo >= 0);
+
+  // Inflate the most recent electricity bill relative to the median of the
+  // earlier ones, so the demo reliably shows an "amount spike" insight.
+  const electricity = past
+    .filter((t) => t.key.startsWith("electricity-"))
+    .sort((a, b) => a.daysAgo - b.daysAgo);
+  if (electricity.length >= 3) {
+    const earlier = electricity.slice(1).map((t) => Math.abs(t.amountCents)).sort((a, b) => a - b);
+    const mid = Math.floor(earlier.length / 2);
+    const baseline = earlier.length % 2 === 0 ? (earlier[mid - 1] + earlier[mid]) / 2 : earlier[mid];
+    electricity[0].amountCents = -Math.round(baseline * ELECTRICITY_SPIKE_FACTOR);
+  }
+
+  return past;
 }
 
 export const seedDemoAccount = mutation({
@@ -167,6 +215,10 @@ export const seedDemoAccount = mutation({
         await ctx.db.patch(existingTx._id, {
           postedAt,
           amountCents: tx.amountCents,
+          description: tx.description,
+          merchantName: tx.merchantName,
+          transactionType: tx.transactionType,
+          status: "POSTED",
           runningBalanceCents,
           updatedAt: Date.now(),
         });
@@ -181,6 +233,8 @@ export const seedDemoAccount = mutation({
         description: tx.description,
         merchantName: tx.merchantName,
         type: tx.amountCents < 0 ? "DEBIT" : "CREDIT",
+        transactionType: tx.transactionType,
+        status: "POSTED",
         runningBalanceCents,
         updatedAt: Date.now(),
       });
@@ -190,6 +244,8 @@ export const seedDemoAccount = mutation({
     await ctx.db.patch(accountId, {
       currentBalanceCents: latestRunningBalanceCents,
       balanceAsOf: now,
+      balanceSource: "synthetic",
+      updatedAt: now,
     });
 
     await ctx.runMutation(internal.recurring.detect.recompute, { accountId });
