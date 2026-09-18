@@ -8,6 +8,7 @@ import { AccountPicker } from "./components/AccountPicker";
 import { AffordabilityCalculator } from "./components/AffordabilityCalculator";
 import { BalanceSummaryCards } from "./components/BalanceSummaryCards";
 import { ForecastChart } from "./components/ForecastChart";
+import { InsightsPanel } from "./components/InsightsPanel";
 import { RecurringTimeline } from "./components/RecurringTimeline";
 import { SyncButton } from "./components/SyncButton";
 import { Skeleton } from "./components/ui/skeleton";
@@ -103,6 +104,7 @@ function App() {
               firstBreachAtMs={forecast.firstBreachAtMs}
               daysUntilPayday={forecast.daysUntilPayday}
             />
+            {selectedId && <InsightsPanel accountId={selectedId} />}
             <ForecastChart
               dailyBalances={forecast.dailyBalances}
               currency={forecast.currency}

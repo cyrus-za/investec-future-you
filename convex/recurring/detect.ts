@@ -1,11 +1,15 @@
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
+import { recomputeInsightsForAccount } from "../insights/mutations";
 import { merchantBaseName } from "../investec/mapping";
+import { categoriseSeries, type SeriesCategory } from "./categories";
+import { formatPct, shortDate } from "./format";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type CadenceLabel = "weekly" | "biweekly" | "monthly" | "irregular";
+export type AnomalyKind = "amount_spike" | "amount_drop" | "missed_payment";
 
 export type DetectableTransaction = {
   id: Id<"transactions">;
@@ -13,6 +17,8 @@ export type DetectableTransaction = {
   amountCents: number; // signed
   merchantName?: string | null;
   description: string;
+  /** Investec transactionType, e.g. "DebitOrders", "CardPurchases", "Deposits". */
+  transactionType?: string | null;
 };
 
 export type DetectedSeries = {
@@ -28,8 +34,46 @@ export type DetectedSeries = {
   predictedNextAt: number;
   confidence: number;
   isPayday: boolean;
+  category: SeriesCategory;
+  transactionType?: string;
+  lastAmountCents: number;
+  anomalyKind?: AnomalyKind;
+  anomalyDetail?: string;
   transactionIds: Id<"transactions">[];
 };
+
+/** All tunable thresholds in one place (documented in docs/detection-insights.md). */
+export const DETECTION = {
+  /** Relative change vs the series' usual amount to count as a spike/drop. */
+  amountChangeRatio: 0.25,
+  /** Absolute floor for spike/drop so R10 → R14 doesn't alert. */
+  amountChangeMinCents: 5000, // R50
+  /** Need at least this many occurrences before judging the "usual" amount. */
+  minOccurrencesForAmountAnomaly: 3,
+  /** Missed = overdue by more than one interval + this many grace days. */
+  missedGraceDays: 3,
+  /** Debit orders: widened interval window (days) still treated as monthly. */
+  debitOrderMonthlyWindow: [20, 40] as const,
+  /** Debit orders: counted as if they had this many extra occurrences. */
+  debitOrderOccurrenceBonus: 2,
+  /** Debit orders: flat confidence bonus once a cadence is established. */
+  debitOrderConfidenceBonus: 0.05,
+  /** Card purchases at supermarkets are discretionary → shave confidence. */
+  cardPurchaseGroceriesFactor: 0.9,
+  maxConfidence: 0.98,
+} as const;
+
+const DEBIT_ORDER_TEXT = /\bDEBIT\s*ORDER\b|\bD\/O\b|\bDEBIT\s*ORD\b/i;
+
+/** True when Investec labels the row a debit order, or the description says so. */
+export function isDebitOrderLike(tx: {
+  transactionType?: string | null;
+  description: string;
+  merchantName?: string | null;
+}): boolean {
+  if (tx.transactionType === "DebitOrders") return true;
+  return DEBIT_ORDER_TEXT.test(tx.description) || DEBIT_ORDER_TEXT.test(tx.merchantName ?? "");
+}
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -44,10 +88,27 @@ function stddev(values: number[], mean: number): number {
   return Math.sqrt(variance);
 }
 
-function classifyCadence(intervalDays: number): CadenceLabel {
+function mode(values: string[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best: string | undefined;
+  let bestCount = 0;
+  for (const [value, count] of counts) {
+    if (count > bestCount) {
+      best = value;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+export function classifyCadence(intervalDays: number, isDebitOrder = false): CadenceLabel {
   if (intervalDays >= 5 && intervalDays <= 9) return "weekly";
   if (intervalDays >= 10 && intervalDays <= 18) return "biweekly";
   if (intervalDays >= 24 && intervalDays <= 34) return "monthly";
+  // Debit orders are almost always monthly; tolerate a late/early run.
+  const [lo, hi] = DETECTION.debitOrderMonthlyWindow;
+  if (isDebitOrder && intervalDays >= lo && intervalDays <= hi) return "monthly";
   return "irregular";
 }
 
@@ -65,6 +126,46 @@ function predictNext(cadence: CadenceLabel, lastOccurrenceAt: number, intervalDa
   return lastOccurrenceAt + intervalDays * DAY_MS;
 }
 
+export type AmountAnomaly = {
+  kind: "amount_spike" | "amount_drop";
+  ratio: number; // signed change relative to baseline, e.g. 0.45 = +45%
+  baselineCents: number;
+};
+
+/**
+ * Compare the most recent amount with the median of the *previous*
+ * occurrences (so the latest value can't drag its own baseline). Requires
+ * >= 3 occurrences; needs both a >= 25% and a >= R50 change.
+ */
+export function detectAmountAnomaly(amountsChronological: number[]): AmountAnomaly | null {
+  if (amountsChronological.length < DETECTION.minOccurrencesForAmountAnomaly) return null;
+  const last = amountsChronological[amountsChronological.length - 1];
+  const baseline = median(amountsChronological.slice(0, -1));
+  if (baseline <= 0) return null;
+  const diff = last - baseline;
+  const threshold = Math.max(DETECTION.amountChangeRatio * baseline, DETECTION.amountChangeMinCents);
+  if (diff >= threshold) return { kind: "amount_spike", ratio: diff / baseline, baselineCents: baseline };
+  if (-diff >= threshold) return { kind: "amount_drop", ratio: diff / baseline, baselineCents: baseline };
+  return null;
+}
+
+/** A regular series is "missed" once it is overdue by more than one full
+ * interval plus a grace period, judged against the newest transaction date
+ * in the account (not the wall clock, so a stale sync doesn't cause alarms). */
+export function isMissed(
+  series: { cadence: CadenceLabel; predictedNextAt: number; intervalDays: number },
+  newestTransactionAt: number,
+): boolean {
+  if (series.cadence === "irregular") return false;
+  const overdueMs = newestTransactionAt - series.predictedNextAt;
+  return overdueMs > (series.intervalDays + DETECTION.missedGraceDays) * DAY_MS;
+}
+
+export type DetectOptions = {
+  /** Reference "now" for missed-payment checks. Defaults to the newest transaction date. */
+  asOfMs?: number;
+};
+
 /**
  * Detect recurring merchant series from a flat list of transactions for one
  * account. Groups by normalised merchant name + direction (debit/credit) —
@@ -72,10 +173,19 @@ function predictNext(cadence: CadenceLabel, lastOccurrenceAt: number, intervalDa
  * amount consistency instead feeds the confidence score. Series with fewer
  * than 2 occurrences, or with a wildly irregular interval, are classified
  * "irregular" and excluded from balance forecasting (see forecast/engine.ts).
+ *
+ * Signals beyond timing: Investec `transactionType` ("DebitOrders" is a
+ * strong prior for a monthly bill; "CardPurchases" at a supermarket is weak),
+ * keyword categories, and per-series anomalies (spike / drop / missed).
  */
-export function detectRecurringSeries(transactions: DetectableTransaction[]): DetectedSeries[] {
+export function detectRecurringSeries(
+  transactions: DetectableTransaction[],
+  options: DetectOptions = {},
+): DetectedSeries[] {
   const groups = new Map<string, DetectableTransaction[]>();
+  let newestAt = -Infinity;
   for (const tx of transactions) {
+    if (tx.postedAt > newestAt) newestAt = tx.postedAt;
     const direction = tx.amountCents < 0 ? "debit" : "credit";
     const key = `${direction}:${merchantBaseName(tx.merchantName ?? tx.description)}`;
     if (!key.slice(key.indexOf(":") + 1)) continue; // skip empty merchant keys
@@ -83,12 +193,20 @@ export function detectRecurringSeries(transactions: DetectableTransaction[]): De
     bucket.push(tx);
     groups.set(key, bucket);
   }
+  const asOfMs = options.asOfMs ?? newestAt;
 
   const series: DetectedSeries[] = [];
   for (const [key, txs] of groups.entries()) {
     if (txs.length < 2) continue;
     const [direction, merchantKey] = [key.startsWith("debit") ? "debit" : "credit", key.slice(key.indexOf(":") + 1)] as const;
     const sorted = [...txs].sort((a, b) => a.postedAt - b.postedAt);
+    const latest = sorted[sorted.length - 1];
+
+    const transactionType = mode(
+      sorted.map((t) => t.transactionType ?? "").filter((t) => t.length > 0),
+    );
+    const debitOrderVotes = sorted.filter(isDebitOrderLike).length;
+    const isDebitOrder = direction === "debit" && debitOrderVotes * 2 >= sorted.length;
 
     const intervals: number[] = [];
     for (let i = 1; i < sorted.length; i++) {
@@ -96,7 +214,7 @@ export function detectRecurringSeries(transactions: DetectableTransaction[]): De
     }
     const intervalDays = Math.round(median(intervals));
     const intervalStdDev = stddev(intervals, intervalDays);
-    const cadence = classifyCadence(intervalDays);
+    const cadence = classifyCadence(intervalDays, isDebitOrder);
 
     const amounts = sorted.map((t) => Math.abs(t.amountCents));
     const typicalAmountCents = Math.round(median(amounts));
@@ -105,25 +223,57 @@ export function detectRecurringSeries(transactions: DetectableTransaction[]): De
       amountMean === 0 ? 0 : stddev(amounts, amountMean) / amountMean;
 
     const occurrenceCount = sorted.length;
-    const lastOccurrenceAt = sorted[sorted.length - 1].postedAt;
+    const lastOccurrenceAt = latest.postedAt;
+    const label = latest.merchantName || latest.description;
+
+    const { category } = categoriseSeries({
+      text: `${latest.merchantName ?? ""} ${latest.description}`,
+      transactionType,
+      direction,
+    });
 
     // Confidence: more occurrences, tighter interval spread, and tighter
     // amount spread all increase confidence. Each factor is 0..1; combined
-    // by simple average and capped.
-    const occurrenceFactor = Math.min(occurrenceCount / 6, 1);
+    // by simple average and capped. Debit orders count as if they had two
+    // extra occurrences (a bank-mandated monthly pull is strong evidence
+    // even after two runs); supermarket card purchases are discounted.
+    const occurrenceBonus = isDebitOrder ? DETECTION.debitOrderOccurrenceBonus : 0;
+    const occurrenceFactor = Math.min((occurrenceCount + occurrenceBonus) / 6, 1);
     const intervalFactor =
       intervalDays === 0 ? 0 : Math.max(0, 1 - intervalStdDev / intervalDays);
     const amountFactor = Math.max(0, 1 - amountVariance);
-    const confidence =
-      cadence === "irregular"
-        ? Math.min(0.3, occurrenceFactor * 0.3)
-        : Math.round(
-            ((occurrenceFactor + intervalFactor + amountFactor) / 3) * 100,
-          ) / 100;
+    let confidence: number;
+    if (cadence === "irregular") {
+      confidence = Math.min(0.3, occurrenceFactor * 0.3);
+    } else {
+      confidence = (occurrenceFactor + intervalFactor + amountFactor) / 3;
+      if (isDebitOrder) confidence += DETECTION.debitOrderConfidenceBonus;
+      if (transactionType === "CardPurchases" && category === "groceries") {
+        confidence *= DETECTION.cardPurchaseGroceriesFactor;
+      }
+      confidence = Math.min(DETECTION.maxConfidence, confidence);
+    }
+    confidence = Math.round(confidence * 100) / 100;
+
+    const predictedNextAt = predictNext(cadence, lastOccurrenceAt, intervalDays);
+
+    // Anomalies: a stopped series matters more than an old amount change.
+    let anomalyKind: AnomalyKind | undefined;
+    let anomalyDetail: string | undefined;
+    if (isMissed({ cadence, predictedNextAt, intervalDays }, asOfMs)) {
+      anomalyKind = "missed_payment";
+      anomalyDetail = `Expected ${shortDate(predictedNextAt)}, last seen ${shortDate(lastOccurrenceAt)}`;
+    } else {
+      const amountAnomaly = detectAmountAnomaly(amounts);
+      if (amountAnomaly) {
+        anomalyKind = amountAnomaly.kind;
+        anomalyDetail = `${formatPct(amountAnomaly.ratio)} vs usual`;
+      }
+    }
 
     series.push({
       merchantKey,
-      label: sorted[sorted.length - 1].merchantName || sorted[sorted.length - 1].description,
+      label,
       direction,
       cadence,
       typicalAmountCents,
@@ -131,9 +281,13 @@ export function detectRecurringSeries(transactions: DetectableTransaction[]): De
       intervalDays,
       occurrenceCount,
       lastOccurrenceAt,
-      predictedNextAt: predictNext(cadence, lastOccurrenceAt, intervalDays),
+      predictedNextAt,
       confidence,
       isPayday: false, // set below
+      category,
+      ...(transactionType ? { transactionType } : {}),
+      lastAmountCents: amounts[amounts.length - 1],
+      ...(anomalyKind ? { anomalyKind, anomalyDetail } : {}),
       transactionIds: sorted.map((t) => t.id),
     });
   }
@@ -144,7 +298,10 @@ export function detectRecurringSeries(transactions: DetectableTransaction[]): De
     if (s.direction !== "credit" || s.cadence !== "monthly") continue;
     if (!payday || s.typicalAmountCents > payday.typicalAmountCents) payday = s;
   }
-  if (payday) payday.isPayday = true;
+  if (payday) {
+    payday.isPayday = true;
+    if (payday.category === "other") payday.category = "income";
+  }
 
   return series;
 }
@@ -164,6 +321,7 @@ export const recompute = internalMutation({
         amountCents: t.amountCents,
         merchantName: t.merchantName,
         description: t.description,
+        transactionType: t.transactionType,
       })),
     );
 
@@ -180,6 +338,9 @@ export const recompute = internalMutation({
         updatedAt: Date.now(),
       });
     }
-    return { seriesCount: detected.length };
+
+    // Insights are derived from the freshly written series, in the same transaction.
+    const { insightCount } = await recomputeInsightsForAccount(ctx, args.accountId);
+    return { seriesCount: detected.length, insightCount };
   },
 });
