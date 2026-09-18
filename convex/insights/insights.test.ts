@@ -167,8 +167,9 @@ describe("insights (convex-test, seeded demo account)", () => {
   it("series rows carry category, transactionType, lastAmountCents and anomaly fields", async () => {
     const t = createTestBackend();
     const { accountId } = await t.mutation(api.seed.seedDemoAccount, {});
-    const rows = await t.query(api.forecast.queries.listRecurringSeries, { accountId });
-    const byKey = new Map(rows.map((r: { merchantKey: string }) => [r.merchantKey, r]));
+    type Row = { merchantKey: string; cadence: string; [k: string]: unknown };
+    const rows = (await t.query(api.forecast.queries.listRecurringSeries, { accountId })) as Row[];
+    const byKey = new Map<string, Row>(rows.map((r) => [r.merchantKey, r]));
 
     expect(byKey.get("CITY POWER")).toMatchObject({
       category: "utility",

@@ -17,7 +17,8 @@ let seq = 0;
 function tx(
   partial: Omit<DetectableTransaction, "id"> & { id?: string },
 ): DetectableTransaction {
-  return { id: (partial.id ?? `tx${++seq}`) as Id<"transactions">, ...partial };
+  const { id, ...rest } = partial;
+  return { id: (id ?? `tx${++seq}`) as Id<"transactions">, ...rest };
 }
 
 /** n monthly occurrences on the same day-of-month starting at T0. */
