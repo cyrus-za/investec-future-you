@@ -103,6 +103,8 @@ function stepBack(cadence: CadenceLabel, ms: number): number {
   return ms - days * DAY_MS;
 }
 
+export type ExtraEventInput = { dateMs: number; amountCents: number; label: string };
+
 export type RunForecastInput = {
   currentBalanceCents: number;
   series: ForecastSeriesInput[];
@@ -110,7 +112,15 @@ export type RunForecastInput = {
   asOfMs?: number;
   safetyThresholdCents?: number;
   /** Optional hypothetical extra transaction (used by the affordability calculator). */
-  hypothetical?: { dateMs: number; amountCents: number; label: string };
+  hypothetical?: ExtraEventInput;
+  /** Additional one-off what-if transactions (scenario planner). Merged with `hypothetical`. */
+  extraEvents?: ExtraEventInput[];
+  /** Merchant keys to drop from the projection ("what if I cancel this?"). */
+  excludeMerchantKeys?: string[];
+  /** Median daily discretionary spend (positive cents/day), drained every day
+   * from day 1 onward. Applied to the expected and pessimistic bands; the
+   * optimistic band assumes no discretionary spend at all. */
+  variableSpendDailyCents?: number;
 };
 
 /** Project every occurrence of every series into a sorted event list.
@@ -149,18 +159,22 @@ function buildEvents(
   return { events, nextPaydayAtMs };
 }
 
-/** Walk a sorted event list day-by-day and produce the running balance series. */
+/** Walk a sorted event list day-by-day and produce the running balance series.
+ * `dailyDebitCents` (optional) is drained every day from day 1 onward, so the
+ * day-0 balance always equals the real current balance. */
 function computeDailyBalances(
   startingBalanceCents: number,
   events: ForecastEvent[],
   asOfMs: number,
   horizonDays: number,
+  dailyDebitCents = 0,
 ): DailyBalance[] {
   const dailyBalances: DailyBalance[] = [];
   let balance = startingBalanceCents;
   let eventIdx = 0;
   for (let day = 0; day <= horizonDays; day++) {
     const dateMs = asOfMs + day * DAY_MS;
+    if (day > 0) balance -= dailyDebitCents;
     while (eventIdx < events.length && events[eventIdx].dateMs <= dateMs) {
       balance += events[eventIdx].amountCents;
       eventIdx++;
@@ -176,15 +190,22 @@ export function runForecast(input: RunForecastInput): ForecastResult {
   const safetyThresholdCents = input.safetyThresholdCents ?? 0;
   const horizonEndMs = asOfMs + horizonDays * DAY_MS;
 
-  const { events, nextPaydayAtMs } = buildEvents(input.series, asOfMs, horizonEndMs);
+  const excluded = new Set(input.excludeMerchantKeys ?? []);
+  const activeSeries = excluded.size === 0 ? input.series : input.series.filter((s) => !excluded.has(s.merchantKey));
 
-  if (input.hypothetical) {
+  const { events, nextPaydayAtMs } = buildEvents(activeSeries, asOfMs, horizonEndMs);
+
+  const extraEvents: ExtraEventInput[] = [
+    ...(input.extraEvents ?? []),
+    ...(input.hypothetical ? [input.hypothetical] : []),
+  ];
+  for (const extra of extraEvents) {
     events.push({
-      dateMs: input.hypothetical.dateMs,
+      dateMs: extra.dateMs,
       merchantKey: "__hypothetical__",
-      label: input.hypothetical.label,
-      direction: input.hypothetical.amountCents < 0 ? "debit" : "credit",
-      amountCents: input.hypothetical.amountCents,
+      label: extra.label,
+      direction: extra.amountCents < 0 ? "debit" : "credit",
+      amountCents: extra.amountCents,
       confidence: 1,
       isPayday: false,
     });
@@ -192,7 +213,14 @@ export function runForecast(input: RunForecastInput): ForecastResult {
 
   events.sort((a, b) => a.dateMs - b.dateMs);
 
-  const dailyBalances = computeDailyBalances(input.currentBalanceCents, events, asOfMs, horizonDays);
+  const variableSpendDailyCents = Math.max(0, Math.round(input.variableSpendDailyCents ?? 0));
+  const dailyBalances = computeDailyBalances(
+    input.currentBalanceCents,
+    events,
+    asOfMs,
+    horizonDays,
+    variableSpendDailyCents,
+  );
 
   let minBalanceCents = input.currentBalanceCents;
   let minBalanceAtMs = asOfMs;
@@ -207,25 +235,30 @@ export function runForecast(input: RunForecastInput): ForecastResult {
     }
   }
 
-  // Bands: expected = the main series; optimistic = only high-confidence
-  // series; pessimistic = every series scaled up by its amount variance.
-  // The hypothetical (if any) applies to all three bands.
-  const hypotheticalEvents = input.hypothetical
-    ? events.filter((e) => e.merchantKey === "__hypothetical__")
-    : [];
-  const optimistic = buildEvents(input.series, asOfMs, horizonEndMs, { minConfidence: 0.6 });
-  optimistic.events.push(...hypotheticalEvents);
+  // Bands: expected = all series at typical amounts (+ variable-spend drain);
+  // optimistic = only high-confidence series and no discretionary drain;
+  // pessimistic = debits scaled up by amount variance (+ drain). Extra
+  // what-if events apply to all three bands.
+  const extraForecastEvents = events.filter((e) => e.merchantKey === "__hypothetical__");
+  const optimistic = buildEvents(activeSeries, asOfMs, horizonEndMs, { minConfidence: 0.6 });
+  optimistic.events.push(...extraForecastEvents);
   optimistic.events.sort((a, b) => a.dateMs - b.dateMs);
-  const pessimistic = buildEvents(input.series, asOfMs, horizonEndMs, {
+  const pessimistic = buildEvents(activeSeries, asOfMs, horizonEndMs, {
     debitMultiplier: (s) => 1 + (s.amountVariance ?? 0),
   });
-  pessimistic.events.push(...hypotheticalEvents);
+  pessimistic.events.push(...extraForecastEvents);
   pessimistic.events.sort((a, b) => a.dateMs - b.dateMs);
 
   const bands: ForecastBands = {
     expected: dailyBalances,
     optimistic: computeDailyBalances(input.currentBalanceCents, optimistic.events, asOfMs, horizonDays),
-    pessimistic: computeDailyBalances(input.currentBalanceCents, pessimistic.events, asOfMs, horizonDays),
+    pessimistic: computeDailyBalances(
+      input.currentBalanceCents,
+      pessimistic.events,
+      asOfMs,
+      horizonDays,
+      variableSpendDailyCents,
+    ),
   };
 
   // Safe-to-spend: lowest expected balance before the next payday (or

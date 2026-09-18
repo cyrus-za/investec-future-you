@@ -141,4 +141,92 @@ describe("forecast engine (pure)", () => {
     // Pessimistic charges utilities at 150%: day-2 balance = 2_000_000 - 150_000.
     expect(pessimistic[2].balanceCents).toBe(1_850_000);
   });
+
+  it("applies variable spend as a daily drain from day 1, except in the optimistic band", () => {
+    const result = runForecast({
+      currentBalanceCents: 1_000_000,
+      series: [],
+      horizonDays: 10,
+      asOfMs: AS_OF,
+      safetyThresholdCents: 0,
+      variableSpendDailyCents: 10_000,
+    });
+    expect(result.dailyBalances[0].balanceCents).toBe(1_000_000);
+    expect(result.dailyBalances[5].balanceCents).toBe(950_000);
+    expect(result.bands.pessimistic[5].balanceCents).toBe(950_000);
+    expect(result.bands.optimistic[5].balanceCents).toBe(1_000_000);
+    // Runway: 1_000_000 / 10_000 = 100 days > horizon, so no breach.
+    expect(result.runwayDays).toBeNull();
+  });
+
+  it("excludes series by merchantKey and merges extraEvents with the legacy hypothetical", () => {
+    const result = runForecast({
+      currentBalanceCents: 1_000_000,
+      series: [payday, rent],
+      horizonDays: 30,
+      asOfMs: AS_OF,
+      excludeMerchantKeys: ["landlord"],
+      extraEvents: [{ dateMs: AS_OF + 3 * DAY_MS, amountCents: -100_000, label: "Concert" }],
+      hypothetical: { dateMs: AS_OF + 4 * DAY_MS, amountCents: -50_000, label: "Dinner" },
+    });
+    expect(result.events.some((e) => e.merchantKey === "landlord")).toBe(false);
+    expect(result.events.some((e) => e.merchantKey === "employer")).toBe(true);
+    expect(result.events.filter((e) => e.merchantKey === "__hypothetical__")).toHaveLength(2);
+    // Day 4: 1_000_000 - 100_000 - 50_000.
+    expect(result.dailyBalances[4].balanceCents).toBe(850_000);
+  });
+});
+
+describe("forecast queries (seeded)", () => {
+  it("returns a variable-spend estimate and applies it when enabled", async () => {
+    const t = createTestBackend();
+    const { accountId } = await t.mutation(api.seed.seedDemoAccount, {});
+    const off = await t.query(api.forecast.queries.getForecast, { accountId, horizonDays: 30 });
+    const on = await t.query(api.forecast.queries.getForecast, {
+      accountId,
+      horizonDays: 30,
+      includeVariableSpend: true,
+    });
+    expect(off!.variableSpendDailyCents).toBe(0);
+    expect(on!.includeVariableSpend).toBe(true);
+    expect(on!.variableSpendDailyCents).toBeGreaterThanOrEqual(0);
+    // With a non-negative daily drain, the expected band can only be lower.
+    expect(on!.bands.expected[30].balanceCents).toBeLessThanOrEqual(off!.bands.expected[30].balanceCents);
+    expect(on!.safeToSpendCents).toBeLessThanOrEqual(off!.safeToSpendCents);
+  });
+
+  it("supports scenario exclusions via excludeMerchantKeys", async () => {
+    const t = createTestBackend();
+    const { accountId } = await t.mutation(api.seed.seedDemoAccount, {});
+    const base = await t.query(api.forecast.queries.getForecast, { accountId, horizonDays: 30 });
+    const debitKey = base!.events.find((e) => e.direction === "debit")?.merchantKey;
+    expect(debitKey).toBeTruthy();
+    const excluded = await t.query(api.forecast.queries.getForecast, {
+      accountId,
+      horizonDays: 30,
+      excludeMerchantKeys: [debitKey!],
+    });
+    expect(excluded!.events.some((e) => e.merchantKey === debitKey)).toBe(false);
+    expect(excluded!.minBalanceCents).toBeGreaterThanOrEqual(base!.minBalanceCents);
+  });
+
+  it("returns a deterministic verdict sentence from checkAffordability", async () => {
+    const t = createTestBackend();
+    const { accountId } = await t.mutation(api.seed.seedDemoAccount, {});
+    const no = await t.query(api.forecast.queries.checkAffordability, {
+      accountId,
+      amountCents: 999_999_999,
+      label: "Private island",
+    });
+    expect(no!.canAfford).toBe(false);
+    expect(no!.verdict).toContain("Risky");
+    expect(no!.verdict).toContain("not financial advice");
+    const yes = await t.query(api.forecast.queries.checkAffordability, {
+      accountId,
+      amountCents: 100,
+      label: "Coffee",
+    });
+    expect(yes!.verdict).toContain(yes!.canAfford ? "Looks okay" : "Risky");
+    expect(yes!.verdict).toContain("Estimate");
+  });
 });
