@@ -7,6 +7,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { AccountPicker } from "./components/AccountPicker";
 import { AffordabilityCalculator } from "./components/AffordabilityCalculator";
 import { BalanceSummaryCards } from "./components/BalanceSummaryCards";
+import { ChatPanel } from "./components/ChatPanel";
 import { ForecastChart } from "./components/ForecastChart";
 import { RecurringTimeline } from "./components/RecurringTimeline";
 import { SyncButton } from "./components/SyncButton";
@@ -115,6 +116,7 @@ function App() {
                 safetyThresholdCents={SAFETY_THRESHOLD_CENTS}
               />
             )}
+            {selectedId && <ChatPanel accountId={selectedId} />}
             <RecurringTimeline series={series ?? []} currency={forecast.currency} />
           </motion.div>
         )}

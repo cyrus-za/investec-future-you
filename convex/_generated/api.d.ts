@@ -9,6 +9,12 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as chat_coach from "../chat/coach.js";
+import type * as chat_messages from "../chat/messages.js";
+import type * as chat_openai from "../chat/openai.js";
+import type * as chat_prompt from "../chat/prompt.js";
+import type * as chat_status from "../chat/status.js";
+import type * as chat_tools from "../chat/tools.js";
 import type * as crons from "../crons.js";
 import type * as forecast_engine from "../forecast/engine.js";
 import type * as forecast_queries from "../forecast/queries.js";
@@ -29,6 +35,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  "chat/coach": typeof chat_coach;
+  "chat/messages": typeof chat_messages;
+  "chat/openai": typeof chat_openai;
+  "chat/prompt": typeof chat_prompt;
+  "chat/status": typeof chat_status;
+  "chat/tools": typeof chat_tools;
   crons: typeof crons;
   "forecast/engine": typeof forecast_engine;
   "forecast/queries": typeof forecast_queries;

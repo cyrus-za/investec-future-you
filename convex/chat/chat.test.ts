@@ -29,7 +29,9 @@ import {
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 8, 17, 10, 0, 0); // Thu 17 Sep 2026
 
-function series(overrides: Partial<ContextSeries> & { label: string }): ContextSeries {
+type TestSeries = ContextSeries & { occurrenceCount?: number; amountVariance?: number };
+
+function series(overrides: Partial<TestSeries> & { label: string }): TestSeries {
   return {
     direction: "debit",
     cadence: "monthly",
@@ -134,7 +136,8 @@ describe("tool schema and argument parsing", () => {
       expect(t.function.parameters.type).toBe("object");
     }
     const afford = TOOL_DEFINITIONS.find((t) => t.function.name === "check_affordability")!;
-    expect(afford.function.parameters.required).toEqual(["amount_rand"]);
+    const params = afford.function.parameters as { required?: string[] };
+    expect(params.required).toEqual(["amount_rand"]);
   });
 
   it("parses tool arguments defensively", () => {
