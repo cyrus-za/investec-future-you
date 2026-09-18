@@ -9,6 +9,7 @@ import { AffordabilityCalculator } from "./components/AffordabilityCalculator";
 import { BalanceSummaryCards } from "./components/BalanceSummaryCards";
 import { ForecastChart } from "./components/ForecastChart";
 import { RecurringTimeline } from "./components/RecurringTimeline";
+import { SpendingBreakdown } from "./components/SpendingBreakdown";
 import { SyncButton } from "./components/SyncButton";
 import { Skeleton } from "./components/ui/skeleton";
 
@@ -116,6 +117,7 @@ function App() {
               />
             )}
             <RecurringTimeline series={series ?? []} currency={forecast.currency} />
+            {selectedId && <SpendingBreakdown accountId={selectedId} currency={forecast.currency} />}
           </motion.div>
         )}
 
