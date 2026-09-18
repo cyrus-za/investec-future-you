@@ -8,16 +8,22 @@ import { AccountPicker } from "./components/AccountPicker";
 import { AffordabilityCalculator } from "./components/AffordabilityCalculator";
 import { BalanceSummaryCards } from "./components/BalanceSummaryCards";
 import { ForecastChart } from "./components/ForecastChart";
+import { ForecastControls, type ForecastSettings } from "./components/ForecastControls";
 import { RecurringTimeline } from "./components/RecurringTimeline";
+import { ScenarioPlanner, type ScenarioEvent } from "./components/ScenarioPlanner";
 import { SyncButton } from "./components/SyncButton";
 import { Skeleton } from "./components/ui/skeleton";
-
-const SAFETY_THRESHOLD_CENTS = 0;
-const HORIZON_DAYS = 30;
 
 function App() {
   const accounts = useQuery(api.accounts.list, {});
   const [selectedId, setSelectedId] = useState<Id<"accounts"> | null>(null);
+  const [settings, setSettings] = useState<ForecastSettings>({
+    horizonDays: 30,
+    safetyThresholdCents: 0,
+    includeVariableSpend: false,
+  });
+  const [excludedKeys, setExcludedKeys] = useState<string[]>([]);
+  const [extraEvents, setExtraEvents] = useState<ScenarioEvent[]>([]);
 
   useEffect(() => {
     if (!selectedId && accounts && accounts.length > 0) {
@@ -25,11 +31,30 @@ function App() {
     }
   }, [accounts, selectedId]);
 
+  const baseArgs = selectedId
+    ? {
+        accountId: selectedId,
+        horizonDays: settings.horizonDays,
+        safetyThresholdCents: settings.safetyThresholdCents,
+        includeVariableSpend: settings.includeVariableSpend,
+      }
+    : null;
+  const scenarioActive = excludedKeys.length > 0 || extraEvents.length > 0;
   const forecast = useQuery(
     api.forecast.queries.getForecast,
-    selectedId
-      ? { accountId: selectedId, horizonDays: HORIZON_DAYS, safetyThresholdCents: SAFETY_THRESHOLD_CENTS }
+    baseArgs
+      ? {
+          ...baseArgs,
+          ...(excludedKeys.length > 0 ? { excludeMerchantKeys: excludedKeys } : {}),
+          ...(extraEvents.length > 0 ? { extraEvents } : {}),
+        }
       : "skip",
+  );
+  // Baseline (no scenario changes) for the safe-to-spend delta — only
+  // queried while a scenario is actually active.
+  const baselineForecast = useQuery(
+    api.forecast.queries.getForecast,
+    baseArgs && scenarioActive ? baseArgs : "skip",
   );
   const series = useQuery(
     api.forecast.queries.listRecurringSeries,
@@ -102,17 +127,39 @@ function App() {
               minBalanceAtMs={forecast.minBalanceAtMs}
               firstBreachAtMs={forecast.firstBreachAtMs}
               daysUntilPayday={forecast.daysUntilPayday}
+              safeToSpendCents={forecast.safeToSpendCents}
+              runwayDays={forecast.runwayDays}
+            />
+            <ForecastControls
+              settings={settings}
+              onChange={setSettings}
+              currency={forecast.currency}
+              variableSpendDailyCents={forecast.variableSpendDailyCents}
             />
             <ForecastChart
               dailyBalances={forecast.dailyBalances}
+              bands={forecast.bands}
               currency={forecast.currency}
-              safetyThresholdCents={SAFETY_THRESHOLD_CENTS}
+              safetyThresholdCents={settings.safetyThresholdCents}
             />
+            {selectedId && (
+              <ScenarioPlanner
+                series={series ?? []}
+                currency={forecast.currency}
+                excludedKeys={excludedKeys}
+                onExcludedKeysChange={setExcludedKeys}
+                extraEvents={extraEvents}
+                onExtraEventsChange={setExtraEvents}
+                safeToSpendCents={forecast.safeToSpendCents}
+                baselineSafeToSpendCents={baselineForecast?.safeToSpendCents}
+              />
+            )}
             {selectedId && (
               <AffordabilityCalculator
                 accountId={selectedId}
                 currency={forecast.currency}
-                safetyThresholdCents={SAFETY_THRESHOLD_CENTS}
+                safetyThresholdCents={settings.safetyThresholdCents}
+                includeVariableSpend={settings.includeVariableSpend}
               />
             )}
             <RecurringTimeline series={series ?? []} currency={forecast.currency} />

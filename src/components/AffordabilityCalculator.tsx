@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { formatDateFull, formatMoney } from "../lib/format";
+import { formatMoney } from "../lib/format";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
@@ -13,10 +13,12 @@ export function AffordabilityCalculator({
   accountId,
   currency,
   safetyThresholdCents,
+  includeVariableSpend = false,
 }: {
   accountId: Id<"accounts">;
   currency: string;
   safetyThresholdCents: number;
+  includeVariableSpend?: boolean;
 }) {
   const [amountRand, setAmountRand] = useState("500");
   const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10));
@@ -34,6 +36,7 @@ export function AffordabilityCalculator({
           dateMs: submitted.dateMs,
           label: submitted.label,
           safetyThresholdCents,
+          includeVariableSpend,
         }
       : "skip",
   );
@@ -114,17 +117,11 @@ export function AffordabilityCalculator({
                 <XCircle className="mt-0.5 size-4 shrink-0" />
               )}
               <div>
-                <p className="font-medium">
-                  {result.canAfford
-                    ? `Yes — "${submitted.label}" looks affordable.`
-                    : `Risky — "${submitted.label}" would likely cause a shortfall.`}
-                </p>
+                <p className="font-medium">{result.verdict}</p>
                 <p className="mt-1 text-xs opacity-80">
-                  Projected lowest balance after this purchase:{" "}
-                  {formatMoney(result.projectedMinBalanceCents, result.currency)} around{" "}
-                  {formatDateFull(result.projectedMinBalanceAtMs)}.
-                  {result.daysUntilPayday !== null &&
-                    ` Next payday in ${result.daysUntilPayday} day${result.daysUntilPayday === 1 ? "" : "s"}.`}
+                  Safe to spend before this purchase:{" "}
+                  {formatMoney(result.safeToSpendCents, result.currency)}; after:{" "}
+                  {formatMoney(result.safeToSpendAfterPurchaseCents, result.currency)}.
                 </p>
               </div>
             </motion.div>
