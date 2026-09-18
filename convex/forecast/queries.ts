@@ -22,6 +22,7 @@ async function loadAccountAndSeries(ctx: { db: any }, accountId?: Id<"accounts">
     predictedNextAt: s.predictedNextAt,
     confidence: s.confidence,
     isPayday: s.isPayday,
+    amountVariance: s.amountVariance ?? 0,
   }));
   return { account, series, seriesRows };
 }
@@ -113,6 +114,10 @@ export const checkAffordability = query({
       firstBreachAtMs: withPurchase.firstBreachAtMs,
       daysUntilPayday: baseline.daysUntilPayday,
       dailyBalances: withPurchase.dailyBalances,
+      safeToSpendCents: baseline.safeToSpendCents,
+      safeToSpendAfterPurchaseCents: withPurchase.safeToSpendCents,
+      runwayDays: withPurchase.runwayDays,
+      bands: withPurchase.bands,
     };
   },
 });
