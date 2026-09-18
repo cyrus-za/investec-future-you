@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarClock, TrendingDown, Wallet } from "lucide-react";
+import { AlertTriangle, CalendarClock, PiggyBank, TrendingDown, Wallet } from "lucide-react";
 import { motion } from "motion/react";
 import type { ComponentType } from "react";
 import { formatDateFull, formatMoney } from "../lib/format";
@@ -17,6 +17,8 @@ export function BalanceSummaryCards({
   minBalanceAtMs,
   firstBreachAtMs,
   daysUntilPayday,
+  safeToSpendCents,
+  runwayDays,
 }: {
   currency: string;
   startingBalanceCents: number;
@@ -25,6 +27,10 @@ export function BalanceSummaryCards({
   minBalanceAtMs: number;
   firstBreachAtMs: number | null;
   daysUntilPayday: number | null;
+  /** Estimated extra spend possible before next payday without breaching the safety buffer. */
+  safeToSpendCents?: number;
+  /** Days until the projected balance first breaches the safety buffer (null = never). */
+  runwayDays?: number | null;
 }) {
   return (
     <motion.div
@@ -33,6 +39,39 @@ export function BalanceSummaryCards({
       transition={{ staggerChildren: 0.06 }}
       className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
     >
+      {safeToSpendCents !== undefined && (
+        <motion.div variants={cardVariants} className="sm:col-span-2 lg:col-span-4">
+          <Card className="border-primary/40 bg-primary/5">
+            <CardContent className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-primary/15 p-2.5 text-primary">
+                  <PiggyBank className="size-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Safe to spend{daysUntilPayday !== null ? " until payday" : ""}
+                  </div>
+                  <div className="mt-0.5 text-3xl font-bold text-foreground">
+                    {formatMoney(safeToSpendCents, currency)}
+                  </div>
+                </div>
+              </div>
+              <p className="max-w-md text-xs text-muted-foreground">
+                The most you could spend extra before{" "}
+                {daysUntilPayday !== null ? "your next detected payday" : "the end of the horizon"}{" "}
+                while keeping the projected balance above your safety buffer.{" "}
+                {runwayDays !== null && runwayDays !== undefined && (
+                  <span className="text-destructive">
+                    Careful: at current levels your buffer is reached in ~{runwayDays} day
+                    {runwayDays === 1 ? "" : "s"}.
+                  </span>
+                )}{" "}
+                Estimate, not a guarantee.
+              </p>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
       <StatCard
         icon={Wallet}
         label="Available now"
