@@ -13,6 +13,7 @@ import { ForecastControls, type ForecastSettings } from "./components/ForecastCo
 import { InsightsPanel } from "./components/InsightsPanel";
 import { RecurringTimeline } from "./components/RecurringTimeline";
 import { ScenarioPlanner, type ScenarioEvent } from "./components/ScenarioPlanner";
+import { SpendingBreakdown } from "./components/SpendingBreakdown";
 import { SyncButton } from "./components/SyncButton";
 import { Skeleton } from "./components/ui/skeleton";
 
@@ -170,6 +171,7 @@ function App() {
               />
             )}
             <RecurringTimeline series={series ?? []} currency={forecast.currency} />
+            {selectedId && <SpendingBreakdown accountId={selectedId} currency={forecast.currency} />}
           </motion.div>
         )}
 

@@ -9,6 +9,9 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as categorisation from "../categorisation.js";
+import type * as categorisation_categorise from "../categorisation/categorise.js";
+import type * as categorisation_rules from "../categorisation/rules.js";
 import type * as crons from "../crons.js";
 import type * as forecast_engine from "../forecast/engine.js";
 import type * as forecast_queries from "../forecast/queries.js";
@@ -36,6 +39,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  categorisation: typeof categorisation;
+  "categorisation/categorise": typeof categorisation_categorise;
+  "categorisation/rules": typeof categorisation_rules;
   crons: typeof crons;
   "forecast/engine": typeof forecast_engine;
   "forecast/queries": typeof forecast_queries;
