@@ -54,14 +54,15 @@ describe("deriveInsights (pure)", () => {
       currentBalanceCents: 5_000_000,
       asOfMs: NOW,
     });
+    // Severity first, then kind priority (a stopped payment beats a price rise).
     expect(out.map((i) => [i.kind, i.severity])).toEqual([
-      ["amount_spike", "warning"],
       ["missed_payment", "warning"],
+      ["amount_spike", "warning"],
       ["amount_drop", "info"],
     ]);
-    expect(out[0].title).toBe("CITY POWER charged R2,610 — +45% vs usual");
-    expect(out[0].relatedMerchantKey).toBe("CITY POWER");
-    expect(out[1].detail).toContain("Expected 15 Jul, last seen 15 Jun");
+    expect(out[0].detail).toContain("Expected 15 Jul, last seen 15 Jun");
+    expect(out[1].title).toBe("CITY POWER charged R2,610 — +45% vs usual");
+    expect(out[1].relatedMerchantKey).toBe("CITY POWER");
   });
 
   it("sums subscriptions into a monthly figure with a share of payday income", () => {
@@ -82,13 +83,38 @@ describe("deriveInsights (pure)", () => {
     expect(creep.detail).toContain("about 1% of your detected monthly income");
   });
 
-  it("flags a cluster of >= 3 debits inside a 3-day window", () => {
+  it("excludes a stopped subscription from the monthly total and warns above 10% of income", () => {
+    const out = deriveInsights({
+      series: [
+        series({ merchantKey: "NETFLIX", category: "subscription", typicalAmountCents: 19900 }),
+        series({ merchantKey: "GYM", category: "subscription", typicalAmountCents: 45000 }),
+        series({
+          merchantKey: "DSTV",
+          category: "subscription",
+          typicalAmountCents: 89900,
+          predictedNextAt: NOW - 60 * DAY_MS,
+          anomalyKind: "missed_payment",
+        }),
+        series({ merchantKey: "SALARY", direction: "credit", isPayday: true, category: "income", typicalAmountCents: 500000 }),
+      ],
+      currentBalanceCents: 5_000_000,
+      asOfMs: NOW,
+    });
+    const creep = out.find((i) => i.kind === "subscription_creep")!;
+    expect(creep.title).toBe("You spend R649/month on 2 subscriptions");
+    expect(creep.severity).toBe("warning"); // 13% of a R5,000 income
+  });
+
+  it("reports only the heaviest cluster of >= 3 debits inside a 3-day window", () => {
     const out = deriveInsights({
       series: [
         series({ merchantKey: "RENT", typicalAmountCents: 1250000, predictedNextAt: NOW + 5 * DAY_MS }),
         series({ merchantKey: "INSURANCE", typicalAmountCents: 85000, predictedNextAt: NOW + 6 * DAY_MS }),
         series({ merchantKey: "GYM", typicalAmountCents: 45000, predictedNextAt: NOW + 7 * DAY_MS }),
+        // A second, lighter cluster later in the month should not produce a second insight.
         series({ merchantKey: "NETFLIX", typicalAmountCents: 19900, predictedNextAt: NOW + 20 * DAY_MS }),
+        series({ merchantKey: "SPOTIFY", typicalAmountCents: 9900, predictedNextAt: NOW + 21 * DAY_MS }),
+        series({ merchantKey: "SHOWMAX", typicalAmountCents: 9900, predictedNextAt: NOW + 22 * DAY_MS }),
       ],
       currentBalanceCents: 1_000_000, // R10,000 < cluster total of R13,800
       asOfMs: NOW,
@@ -97,6 +123,7 @@ describe("deriveInsights (pure)", () => {
     expect(clusters).toHaveLength(1);
     expect(clusters[0].title).toBe("3 recurring debits (R13,800) expected between 22 Sep and 24 Sep");
     expect(clusters[0].severity).toBe("warning");
+    expect(clusters[0].detail).toContain("RENT, INSURANCE, GYM");
   });
 
   it("raises a cashflow_risk when the 30-day forecast breaches zero", () => {
@@ -151,17 +178,25 @@ describe("insights (convex-test, seeded demo account)", () => {
     expect(spike.title).toMatch(/CITY POWER charged R[\d,]+ — \+4\d% vs usual/);
 
     const creep = insights.find((i) => i.kind === "subscription_creep")!;
-    // Netflix R199 + Spotify R99 + Showmax R99 + Virgin Active R450 (gym keyword); DSTV stopped but still a series.
-    expect(creep.title).toMatch(/^You spend R[\d,]+\/month on \d subscriptions$/);
+    // Virgin Active R450 (gym keyword) + Netflix R199 + Showmax R99 + Spotify R99; stopped DSTV excluded.
+    expect(creep.title).toBe("You spend R847/month on 4 subscriptions");
 
     const missed = insights.find((i) => i.kind === "missed_payment")!;
     expect(missed.relatedMerchantKey).toBe("DSTV");
 
-    // Severity ordering: warnings before infos.
+    // Weekly groceries vary by nature and must not produce amount alerts.
+    expect(insights.find((i) => i.relatedMerchantKey === "WOOLWORTHS")).toBeUndefined();
+    // One cluster at most (the heaviest stretch), and no cashflow risk on a healthy balance.
+    expect(insights.filter((i) => i.kind === "upcoming_cluster").length).toBeLessThanOrEqual(1);
+    expect(insights.find((i) => i.kind === "cashflow_risk")).toBeUndefined();
+
+    // Ordering: severity first (warnings before infos), then kind priority.
     const severities = insights.map((i) => i.severity);
     const firstInfo = severities.indexOf("info");
     const lastWarning = severities.lastIndexOf("warning");
     if (firstInfo !== -1 && lastWarning !== -1) expect(lastWarning).toBeLessThan(firstInfo);
+    expect(insights[0].kind).toBe("missed_payment");
+    expect(insights[1].kind).toBe("amount_spike");
   });
 
   it("series rows carry category, transactionType, lastAmountCents and anomaly fields", async () => {
