@@ -7,6 +7,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { AccountPicker } from "./components/AccountPicker";
 import { AffordabilityCalculator } from "./components/AffordabilityCalculator";
 import { BalanceSummaryCards } from "./components/BalanceSummaryCards";
+import { DataProvenance } from "./components/DataProvenance";
 import { ForecastChart } from "./components/ForecastChart";
 import { ForecastControls, type ForecastSettings } from "./components/ForecastControls";
 import { InsightsPanel } from "./components/InsightsPanel";
@@ -92,6 +93,10 @@ function App() {
             <SyncButton />
           </div>
         </header>
+
+        <div className="mb-6">
+          <DataProvenance accountId={selectedId} />
+        </div>
 
         {accounts && accounts.length === 0 && (
           <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">

@@ -6,7 +6,7 @@
  */
 
 /** Extract the last 4 digits from Investec `cardNumber` like "402261xxxxxx0011". */
-export function extractLast4(cardNumber?: string): string | null {
+export function extractLast4(cardNumber?: string | null): string | null {
   if (!cardNumber) return null;
   const m = /(\d{4})\s*$/.exec(cardNumber);
   return m ? m[1] : null;
@@ -19,7 +19,7 @@ export function extractLast4(cardNumber?: string): string | null {
  * first 2-letter country code.
  */
 export function deriveMerchantName(description: string): string {
-  const cleaned = description.replace(/\s+/gu, " ").trim();
+  const cleaned = normaliseDescription(description);
   const parts = cleaned.split(" ");
   const trimmed = parts.filter((p, i) => {
     if (i === parts.length - 1 && /^[A-Z]{2}$/u.test(p)) return false;
@@ -29,15 +29,29 @@ export function deriveMerchantName(description: string): string {
 }
 
 /**
+ * Collapse the runs of internal whitespace Investec pads descriptions with
+ * ("Amazon Retail            Lagos        ZA" -> "Amazon Retail Lagos ZA").
+ */
+export function normaliseDescription(description: string | null | undefined): string {
+  return (description ?? "").replace(/\s+/gu, " ").trim();
+}
+
+/**
  * Determine posting time as UTC ms from Investec ISO date fields.
  *
  * Prefers transactionDate (the real economic date) over postingDate, falls
  * back to actionDate, then postingDate, then now() as a last resort.
+ *
+ * Why this order: in the sandbox, `postingDate` can be days (card purchases)
+ * or months (savings products: "2027-01-02") in the FUTURE relative to the
+ * real purchase date, `valueDate` is often a far-future month-end and
+ * `actionDate` is simply the date the data was generated. `transactionDate`
+ * is the only field that consistently reflects when money actually moved.
  */
 export function derivePostedAtMs(tx: {
-  postingDate?: string;
-  transactionDate?: string;
-  actionDate?: string;
+  postingDate?: string | null;
+  transactionDate?: string | null;
+  actionDate?: string | null;
   valueDate?: string | null;
 }): number {
   const iso =
@@ -54,7 +68,7 @@ export function derivePostedAtMs(tx: {
 }
 
 /** Amount in signed cents. Investec "amount" is positive, with type indicating sign. */
-export function deriveAmountCents(amount: number, type: string | undefined): number {
+export function deriveAmountCents(amount: number, type: string | null | undefined): number {
   const cents = Math.round(amount * 100);
   if (type && type.toUpperCase() === "DEBIT") return -cents;
   return cents;
@@ -65,16 +79,17 @@ export function deriveAmountCents(amount: number, type: string | undefined): num
  * `postedOrder` is intentionally excluded — Investec can renumber transactions
  * within a posting date between API calls.
  */
-export function deriveTransactionId(tx: {
-  uuid?: string;
+type IdentifiableTx = {
+  uuid?: string | null;
   accountId: string;
-  postingDate?: string;
-  transactionDate?: string;
+  postingDate?: string | null;
+  transactionDate?: string | null;
   amount: number;
   description: string;
-  postedOrder?: number;
-}): string {
-  if (tx.uuid) return tx.uuid;
+  postedOrder?: number | null;
+};
+
+function contentHashId(tx: IdentifiableTx): string {
   const stableDate =
     (tx.transactionDate && tx.transactionDate.trim()) ||
     (tx.postingDate && tx.postingDate.trim()) ||
@@ -91,6 +106,36 @@ export function deriveTransactionId(tx: {
     hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
   }
   return `${tx.accountId}-${stableDate || "x"}-${hash.toString(16)}`;
+}
+
+export function deriveTransactionId(tx: IdentifiableTx): string {
+  if (tx.uuid) return tx.uuid;
+  return contentHashId(tx);
+}
+
+/**
+ * Assign a unique, stable id to every transaction in one API response.
+ *
+ * Investec's `uuid` is normally unique, but the sandbox's savings products
+ * return several rows sharing one uuid (all with postedOrder 0), which would
+ * make a plain upsert-by-uuid silently collapse them into a single row. The
+ * first row keeps the bare uuid (so ids already stored stay stable); any
+ * later row that collides gets `<uuid>~<contentHash>` so it is still
+ * deterministic across syncs. Returns ids positionally aligned with `txs`.
+ */
+export function assignTransactionIds(txs: IdentifiableTx[]): string[] {
+  const seen = new Set<string>();
+  return txs.map((tx) => {
+    let id = deriveTransactionId(tx);
+    if (seen.has(id)) {
+      id = `${id}~${contentHashId(tx).split("-").pop()}`;
+      // Still colliding (identical content twice)? Fall back to a counter.
+      let n = 2;
+      while (seen.has(id)) id = `${id}~${n++}`;
+    }
+    seen.add(id);
+    return id;
+  });
 }
 
 /**
