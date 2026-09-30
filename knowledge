@@ -51,9 +51,11 @@ that vary month to month (electricity, water). Instead, group by merchant
 + direction only, and let *amount consistency* feed into the confidence
 score rather than the grouping key itself.
 
-## Balance source: use `runningBalance`, not a separate balance call
+## Balance source: prefer the balance endpoint, fall back to runningBalance
 
-Investec's transactions endpoint already returns `runningBalance` per
-transaction. Using the most recent transaction's `runningBalance` as the
-forecast's starting point avoids a second `GET .../balance` API call
-entirely.
+`GET /za/pb/v1/accounts/:id/balance` is the authoritative current/available
+balance and is what the forecast starts from when the sync succeeded.
+`runningBalance` on the newest transaction is the fallback (and what the
+synthetic seed uses). Do not subtract pending holds from that figure — the
+sandbox pending endpoint 500s for most accounts, and an unposted hold plus a
+posted balance double-counts.

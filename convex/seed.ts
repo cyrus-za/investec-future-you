@@ -36,9 +36,12 @@ export function buildSyntheticTransactions(): SeedTx[] {
   const txs: SeedTx[] = [];
   const now = Date.now();
   const monthsBack = 6;
+  // Step real calendar months. A 30-day offset double-books a month when
+  // today is the 30th or 31st (two "25ths" land in the same month).
+  const today = new Date(now);
 
   for (let m = 0; m < monthsBack; m++) {
-    const monthAnchor = new Date(now - m * 30 * DAY_MS);
+    const monthAnchor = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - m, 1));
     const year = monthAnchor.getUTCFullYear();
     const month = monthAnchor.getUTCMonth() + 1;
     const daysAgo = (ms: number) => Math.round((now - ms) / DAY_MS);
@@ -249,6 +252,7 @@ export const seedDemoAccount = mutation({
     });
 
     await ctx.runMutation(internal.recurring.detect.recompute, { accountId });
+    await ctx.runMutation(internal.categorisation.recomputeForAccount, { accountId });
 
     return { accountId, transactionsInserted: inserted };
   },

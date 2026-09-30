@@ -249,6 +249,9 @@ async function syncAllAccounts(ctx: ActionCtx, args: SyncArgs): Promise<SyncResu
       }
 
       await ctx.runMutation(internal.recurring.detect.recompute, { accountId });
+      // Categories are derived from the rows just upserted. Idempotent: only
+      // rows whose category actually changed are written.
+      await ctx.runMutation(internal.categorisation.recomputeForAccount, { accountId });
     }
 
     await ctx.runMutation(internal.investec.mutations.finishSyncRun, {

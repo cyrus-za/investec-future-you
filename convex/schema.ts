@@ -49,8 +49,9 @@ export default defineSchema({
     .index("by_account_and_postedAt", ["accountId", "postedAt"]),
 
   // Pending (not yet posted) transactions from
-  // GET /za/pb/v1/accounts/:id/pending-transactions. These are near-certain
-  // upcoming debits and are folded into the forecast with confidence 1.
+  // GET /za/pb/v1/accounts/:id/pending-transactions. Shown as provenance only;
+  // not subtracted from the forecast (sandbox endpoint is unreliable, and an
+  // unposted hold plus a posted balance would double-count).
   pendingTransactions: defineTable({
     accountId: v.id("accounts"),
     description: v.string(),

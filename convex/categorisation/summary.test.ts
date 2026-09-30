@@ -9,7 +9,7 @@ describe("categorisation (convex-test)", () => {
 
     const first = await t.mutation(api.categorisation.recompute, { accountId });
     expect(first.processed).toBe(transactionsInserted);
-    expect(first.updated).toBe(transactionsInserted); // nothing was categorised before
+    expect(first.updated).toBe(0); // seed already categorises; recompute is idempotent
     expect(first.byCategory.income).toBeGreaterThan(0);
     expect(first.byCategory.rent_housing).toBeGreaterThan(0);
     expect(first.byCategory.subscriptions).toBeGreaterThan(0);
@@ -117,15 +117,38 @@ describe("categorisation (convex-test)", () => {
     expect(s!.averagingMonths).toHaveLength(s!.monthsWithData);
   });
 
-  it("summary before recompute still works, reporting the uncategorised count", async () => {
+  it("summary of uncategorised rows still works and reports the uncategorised count", async () => {
     const t = createTestBackend();
-    const { accountId } = await t.mutation(api.seed.seedDemoAccount, {});
-    const s = await t.query(api.categorisation.summary, { accountId, months: 6 });
+    const accountId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("accounts", {
+        investecAccountId: "uncategorised",
+        investecAccountNumber: "2",
+        name: "Uncategorised",
+        currency: "ZAR",
+        updatedAt: Date.now(),
+      });
+      const postedAt = Date.UTC(2026, 5, 15);
+      await ctx.db.insert("transactions", {
+        accountId: id,
+        investecTransactionId: "uncat-1",
+        postedAt,
+        amountCents: -10000,
+        currency: "ZAR",
+        description: "UNKNOWN MERCHANT",
+        merchantName: "UNKNOWN MERCHANT",
+        type: "DEBIT",
+        updatedAt: postedAt,
+      });
+      return id;
+    });
+    const s = await t.query(api.categorisation.summary, {
+      accountId,
+      months: 6,
+      nowMs: Date.UTC(2026, 8, 1),
+    });
     expect(s).not.toBeNull();
-    expect(s!.months).toBe(6);
-    expect(s!.perMonth).toHaveLength(6);
     expect(s!.uncategorisedCount).toBe(s!.transactionCount);
-    // Everything lands in "other" until categories are computed.
+    expect(s!.uncategorisedCount).toBe(1);
     expect(s!.averageMonthlyByCategory.map((c) => c.category)).toEqual(["other"]);
   });
 

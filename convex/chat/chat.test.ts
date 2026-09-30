@@ -189,6 +189,9 @@ describe("tool result formatting", () => {
     firstBreachAtMs: null,
     nextPaydayAtMs: NOW + 8 * DAY,
     daysUntilPayday: 8,
+    safeToSpendCents: 700000,
+    runwayDays: null,
+    bands: { expected: dailyBalances, optimistic: dailyBalances, pessimistic: dailyBalances },
   };
 
   it("collapses a forecast to human-formatted checkpoints (no raw cents, no 31-day array)", () => {
