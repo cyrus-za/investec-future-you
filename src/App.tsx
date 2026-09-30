@@ -7,6 +7,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { AccountPicker } from "./components/AccountPicker";
 import { AffordabilityCalculator } from "./components/AffordabilityCalculator";
 import { BalanceSummaryCards } from "./components/BalanceSummaryCards";
+import { ChatPanel } from "./components/ChatPanel";
 import { DataProvenance } from "./components/DataProvenance";
 import { ForecastChart } from "./components/ForecastChart";
 import { ForecastControls, type ForecastSettings } from "./components/ForecastControls";
@@ -170,6 +171,7 @@ function App() {
                 includeVariableSpend={settings.includeVariableSpend}
               />
             )}
+            {selectedId && <ChatPanel accountId={selectedId} />}
             <RecurringTimeline series={series ?? []} currency={forecast.currency} />
             {selectedId && <SpendingBreakdown accountId={selectedId} currency={forecast.currency} />}
           </motion.div>
