@@ -112,6 +112,12 @@ describe("detectAmountAnomaly", () => {
   it("ignores changes under 25%", () => {
     expect(detectAmountAnomaly([100_000, 100_000, 100_000, 120_000])).toBeNull();
   });
+  it("ignores a 30% dip in a naturally variable series (within 2 standard deviations)", () => {
+    // Weekly groceries: R600..R1,050 with sd ≈ R160; a R580 shop is ordinary.
+    expect(detectAmountAnomaly([60_000, 105_000, 80_000, 100_000, 65_000, 95_000, 58_000])).toBeNull();
+    // The same 30% dip on a fixed bill is flagged.
+    expect(detectAmountAnomaly([80_000, 80_000, 80_000, 80_000, 56_000])?.kind).toBe("amount_drop");
+  });
 });
 
 describe("isMissed", () => {

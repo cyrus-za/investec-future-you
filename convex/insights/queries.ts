@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query } from "../_generated/server";
-import { SEVERITY_RANK } from "./derive";
+import { compareInsights } from "./derive";
 
 /**
  * Active (non-dismissed) insights for an account, most severe first.
@@ -20,11 +20,6 @@ export const list = query({
       .take(100);
     return rows
       .filter((r) => r.dismissedAt === undefined)
-      .sort(
-        (a, b) =>
-          SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
-          a.createdAt - b.createdAt ||
-          a.title.localeCompare(b.title),
-      );
+      .sort((a, b) => compareInsights(a, b) || a.createdAt - b.createdAt);
   },
 });

@@ -69,6 +69,27 @@ export const INSIGHTS = {
 
 export const SEVERITY_RANK: Record<InsightSeverity, number> = { critical: 0, warning: 1, info: 2 };
 
+/** Tie-break within a severity: most actionable first. Unknown kinds sort last. */
+export const KIND_RANK: Record<string, number> = {
+  cashflow_risk: 0,
+  missed_payment: 1,
+  amount_spike: 2,
+  upcoming_cluster: 3,
+  subscription_creep: 4,
+  amount_drop: 5,
+};
+
+export function compareInsights(
+  a: { severity: InsightSeverity; kind: string; title: string },
+  b: { severity: InsightSeverity; kind: string; title: string },
+): number {
+  return (
+    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+    (KIND_RANK[a.kind] ?? 99) - (KIND_RANK[b.kind] ?? 99) ||
+    a.title.localeCompare(b.title)
+  );
+}
+
 /** Convert a series' typical amount into a per-month figure. */
 export function monthlyEquivalentCents(series: { cadence: CadenceLabel; typicalAmountCents: number }): number {
   switch (series.cadence) {
@@ -116,8 +137,13 @@ function anomalyInsight(s: InsightSeriesInput, sym: string): DerivedInsight | nu
 }
 
 function subscriptionCreep(series: InsightSeriesInput[], sym: string): DerivedInsight | null {
+  // Active subscriptions only: a stopped (missed) one is reported separately.
   const subs = series.filter(
-    (s) => s.direction === "debit" && s.category === "subscription" && s.cadence !== "irregular",
+    (s) =>
+      s.direction === "debit" &&
+      s.category === "subscription" &&
+      s.cadence !== "irregular" &&
+      s.anomalyKind !== "missed_payment",
   );
   if (subs.length < INSIGHTS.subscriptionMinCount) return null;
   const totalMonthly = subs.reduce((sum, s) => sum + monthlyEquivalentCents(s), 0);
@@ -137,13 +163,15 @@ function subscriptionCreep(series: InsightSeriesInput[], sym: string): DerivedIn
   };
 }
 
-function upcomingClusters(
+/** The single heaviest run of >= 3 debits inside any 3-day window of the
+ * horizon (one insight, not one per busy stretch, to keep the panel calm). */
+function upcomingCluster(
   series: InsightSeriesInput[],
   asOfMs: number,
   horizonDays: number,
   currentBalanceCents: number,
   sym: string,
-): DerivedInsight[] {
+): DerivedInsight | null {
   const toMs = asOfMs + horizonDays * DAY_MS;
   const events: { dateMs: number; label: string; amountCents: number }[] = [];
   for (const s of series) {
@@ -155,34 +183,32 @@ function upcomingClusters(
   }
   events.sort((a, b) => a.dateMs - b.dateMs);
 
-  const out: DerivedInsight[] = [];
-  let i = 0;
-  while (i < events.length) {
+  let best: { events: typeof events; total: number } | null = null;
+  for (let i = 0; i < events.length; i++) {
     const windowEnd = events[i].dateMs + INSIGHTS.clusterWindowDays * DAY_MS;
     let j = i;
     while (j < events.length && events[j].dateMs <= windowEnd) j++;
     const cluster = events.slice(i, j);
-    if (cluster.length >= INSIGHTS.clusterMinDebits) {
-      const total = cluster.reduce((sum, e) => sum + e.amountCents, 0);
-      const first = cluster[0].dateMs;
-      const last = cluster[cluster.length - 1].dateMs;
-      const when = first === last ? `on ${shortDate(first)}` : `between ${shortDate(first)} and ${shortDate(last)}`;
-      out.push({
-        kind: "upcoming_cluster",
-        severity: total > currentBalanceCents ? "warning" : "info",
-        title: `${cluster.length} recurring debits (${formatRand(total, sym)}) expected ${when}`,
-        detail: `${cluster.map((e) => e.label).join(", ")}. ${
-          total > currentBalanceCents
-            ? "That is more than your current available balance, so timing matters."
-            : "Make sure the balance can cover them all at once."
-        }`,
-      });
-      i = j; // skip past this cluster
-    } else {
-      i++;
-    }
+    if (cluster.length < INSIGHTS.clusterMinDebits) continue;
+    const total = cluster.reduce((sum, e) => sum + e.amountCents, 0);
+    if (!best || total > best.total) best = { events: cluster, total };
   }
-  return out;
+  if (!best) return null;
+
+  const first = best.events[0].dateMs;
+  const last = best.events[best.events.length - 1].dateMs;
+  const when = first === last ? `on ${shortDate(first)}` : `between ${shortDate(first)} and ${shortDate(last)}`;
+  const exceedsBalance = best.total > currentBalanceCents;
+  return {
+    kind: "upcoming_cluster",
+    severity: exceedsBalance ? "warning" : "info",
+    title: `${best.events.length} recurring debits (${formatRand(best.total, sym)}) expected ${when}`,
+    detail: `Heaviest stretch in the next ${horizonDays} days: ${best.events.map((e) => e.label).join(", ")}. ${
+      exceedsBalance
+        ? "That is more than your current available balance, so timing matters."
+        : "Make sure the balance can cover them all at once."
+    }`,
+  };
 }
 
 function toForecastInput(s: InsightSeriesInput): ForecastSeriesInput {
@@ -262,9 +288,8 @@ export function deriveInsights(input: DeriveInsightsInput): DerivedInsight[] {
   const creep = subscriptionCreep(input.series, sym);
   if (creep) insights.push(creep);
 
-  insights.push(...upcomingClusters(input.series, input.asOfMs, horizonDays, input.currentBalanceCents, sym));
+  const cluster = upcomingCluster(input.series, input.asOfMs, horizonDays, input.currentBalanceCents, sym);
+  if (cluster) insights.push(cluster);
 
-  return insights.sort(
-    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.title.localeCompare(b.title),
-  );
+  return insights.sort(compareInsights);
 }

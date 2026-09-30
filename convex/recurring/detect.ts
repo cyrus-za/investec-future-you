@@ -48,6 +48,9 @@ export const DETECTION = {
   amountChangeRatio: 0.25,
   /** Absolute floor for spike/drop so R10 → R14 doesn't alert. */
   amountChangeMinCents: 5000, // R50
+  /** Change must also exceed this many standard deviations of the earlier
+   * amounts, so a naturally variable series (weekly groceries) doesn't alert. */
+  amountChangeMinSigmas: 2,
   /** Need at least this many occurrences before judging the "usual" amount. */
   minOccurrencesForAmountAnomaly: 3,
   /** Missed = overdue by more than one interval + this many grace days. */
@@ -135,15 +138,24 @@ export type AmountAnomaly = {
 /**
  * Compare the most recent amount with the median of the *previous*
  * occurrences (so the latest value can't drag its own baseline). Requires
- * >= 3 occurrences; needs both a >= 25% and a >= R50 change.
+ * >= 3 occurrences; the change must be >= 25%, >= R50 and >= 2 standard
+ * deviations of the earlier amounts (all three, so fixed bills are judged
+ * strictly and naturally variable series are judged leniently).
  */
 export function detectAmountAnomaly(amountsChronological: number[]): AmountAnomaly | null {
   if (amountsChronological.length < DETECTION.minOccurrencesForAmountAnomaly) return null;
   const last = amountsChronological[amountsChronological.length - 1];
-  const baseline = median(amountsChronological.slice(0, -1));
+  const earlier = amountsChronological.slice(0, -1);
+  const baseline = median(earlier);
   if (baseline <= 0) return null;
+  const earlierMean = earlier.reduce((a, b) => a + b, 0) / earlier.length;
+  const sigma = stddev(earlier, earlierMean);
   const diff = last - baseline;
-  const threshold = Math.max(DETECTION.amountChangeRatio * baseline, DETECTION.amountChangeMinCents);
+  const threshold = Math.max(
+    DETECTION.amountChangeRatio * baseline,
+    DETECTION.amountChangeMinCents,
+    DETECTION.amountChangeMinSigmas * sigma,
+  );
   if (diff >= threshold) return { kind: "amount_spike", ratio: diff / baseline, baselineCents: baseline };
   if (-diff >= threshold) return { kind: "amount_drop", ratio: diff / baseline, baselineCents: baseline };
   return null;
